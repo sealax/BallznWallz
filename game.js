@@ -1,0 +1,654 @@
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const levelInfoEl = document.getElementById('levelInfo');
+const ballCountEl = document.getElementById('ballCount');
+const regionCountEl = document.getElementById('regionCount');
+const scoreEl = document.getElementById('score');
+const statusEl = document.getElementById('status');
+
+const difficultySelect = document.getElementById('difficultySelect');
+const playerNameEl = document.getElementById('playerName');
+const restartBtn = document.getElementById('restartBtn');
+const nextLevelBtn = document.getElementById('nextLevelBtn');
+const toggleAimBtn = document.getElementById('toggleAimBtn');
+const highScoresListEl = document.getElementById('highScoresList');
+
+const HIGH_SCORES_KEY = 'ball_splitter_high_scores_v1';
+const MAX_HIGH_SCORES = 10;
+
+const DIFFICULTY = {
+  easy: {
+    label: 'Easy',
+    baseBalls: 1,
+    speedMin: 90,
+    speedMax: 125,
+    speedUpPerCut: 1.05,
+    baseWallSpeed: 430,
+    targetCapture: 0.72,
+    scoreMult: 0.9
+  },
+  normal: {
+    label: 'Normal',
+    baseBalls: 2,
+    speedMin: 110,
+    speedMax: 150,
+    speedUpPerCut: 1.08,
+    baseWallSpeed: 380,
+    targetCapture: 0.75,
+    scoreMult: 1
+  },
+  hard: {
+    label: 'Hard',
+    baseBalls: 3,
+    speedMin: 130,
+    speedMax: 180,
+    speedUpPerCut: 1.11,
+    baseWallSpeed: 330,
+    targetCapture: 0.8,
+    scoreMult: 1.2
+  }
+};
+
+const BASE = {
+  minRadius: 7,
+  maxRadius: 12,
+  wallThickness: 6,
+  minRegionSize: 70
+};
+
+const state = {
+  balls: [],
+  regions: [],
+  nextRegionId: 1,
+  activeCut: null,
+  orientation: 'vertical',
+  status: 'running',
+  level: 1,
+  cutsCompleted: 0,
+  runScore: 0,
+  scoreSaved: false,
+  difficultyKey: 'normal',
+  levelCfg: null
+};
+
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function makeRegion(x, y, w, h) {
+  return { id: state.nextRegionId++, x, y, w, h };
+}
+
+function pointInRegion(x, y, region) {
+  return x >= region.x && x <= region.x + region.w && y >= region.y && y <= region.y + region.h;
+}
+
+function pickRegionAt(x, y) {
+  return state.regions.find((region) => pointInRegion(x, y, region));
+}
+
+function playableArea() {
+  return state.regions.reduce((sum, region) => sum + region.w * region.h, 0);
+}
+
+function totalArea() {
+  return canvas.clientWidth * canvas.clientHeight;
+}
+
+function captureRatio() {
+  if (!state.regions.length) {
+    return 1;
+  }
+  return 1 - playableArea() / totalArea();
+}
+
+function formatPct(value) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function currentDifficulty() {
+  return DIFFICULTY[state.difficultyKey] || DIFFICULTY.normal;
+}
+
+function computeLevelConfig(level) {
+  const d = currentDifficulty();
+  return {
+    ballCount: d.baseBalls + Math.floor((level - 1) / 2),
+    speedMin: d.speedMin + level * 7,
+    speedMax: d.speedMax + level * 9,
+    speedUpPerCut: d.speedUpPerCut,
+    wallSpeed: Math.max(180, d.baseWallSpeed - level * 9),
+    targetCapture: Math.min(0.9, d.targetCapture + level * 0.01)
+  };
+}
+
+function setCanvasSize() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function createBalls(region, count, speedMin, speedMax) {
+  const balls = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const r = rand(BASE.minRadius, BASE.maxRadius);
+    const angle = rand(0, Math.PI * 2);
+    const speed = rand(speedMin, speedMax);
+    balls.push({
+      x: rand(region.x + r, region.x + region.w - r),
+      y: rand(region.y + r, region.y + region.h - r),
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r,
+      regionId: region.id
+    });
+  }
+
+  return balls;
+}
+
+function assignBallRegions() {
+  for (const ball of state.balls) {
+    const region = pickRegionAt(ball.x, ball.y);
+    if (region) {
+      ball.regionId = region.id;
+    }
+  }
+}
+
+function statusText() {
+  if (state.status === 'gameover') {
+    return 'Run Over: a ball touched the growing wall.';
+  }
+  if (state.status === 'levelwon') {
+    return `Level ${state.level} cleared. Continue to Level ${state.level + 1}.`;
+  }
+  return `Goal: capture ${formatPct(state.levelCfg.targetCapture)} this level.`;
+}
+
+function syncAimButton() {
+  if (toggleAimBtn) {
+    toggleAimBtn.textContent = `Aim: ${state.orientation === 'vertical' ? 'Vertical' : 'Horizontal'}`;
+  }
+}
+
+function updateHud() {
+  const d = currentDifficulty();
+  levelInfoEl.textContent = `Difficulty: ${d.label} | Level: ${state.level}`;
+  ballCountEl.textContent = `Balls: ${state.balls.length}`;
+  regionCountEl.textContent = `Cuts: ${state.cutsCompleted} | Aim: ${state.orientation === 'vertical' ? 'Vertical' : 'Horizontal'} (Space)`;
+  scoreEl.textContent = `Run Score: ${Math.round(state.runScore)} | Captured: ${formatPct(captureRatio())}`;
+  statusEl.textContent = statusText();
+  nextLevelBtn.disabled = state.status !== 'levelwon';
+  syncAimButton();
+}
+
+function loadHighScores() {
+  try {
+    const raw = localStorage.getItem(HIGH_SCORES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHighScores(scores) {
+  localStorage.setItem(HIGH_SCORES_KEY, JSON.stringify(scores));
+}
+
+function renderHighScores() {
+  const scores = loadHighScores();
+  highScoresListEl.innerHTML = '';
+
+  if (!scores.length) {
+    const li = document.createElement('li');
+    li.textContent = 'No scores yet';
+    highScoresListEl.appendChild(li);
+    return;
+  }
+
+  for (const entry of scores) {
+    const li = document.createElement('li');
+    li.textContent = `${entry.name} | ${entry.score} pts | L${entry.level} | ${entry.difficulty}`;
+    highScoresListEl.appendChild(li);
+  }
+}
+
+function saveRunScoreIfNeeded() {
+  if (state.scoreSaved || state.runScore <= 0) {
+    return;
+  }
+
+  const scores = loadHighScores();
+  scores.push({
+    name: (playerNameEl.value || 'Player').trim().slice(0, 12) || 'Player',
+    score: Math.round(state.runScore),
+    level: state.level,
+    difficulty: currentDifficulty().label
+  });
+
+  scores.sort((a, b) => b.score - a.score);
+  const top = scores.slice(0, MAX_HIGH_SCORES);
+  saveHighScores(top);
+  state.scoreSaved = true;
+  renderHighScores();
+}
+
+function startLevel(level) {
+  state.level = level;
+  state.levelCfg = computeLevelConfig(level);
+  state.nextRegionId = 1;
+  state.activeCut = null;
+  state.orientation = 'vertical';
+  state.cutsCompleted = 0;
+  state.status = 'running';
+
+  const full = makeRegion(0, 0, canvas.clientWidth, canvas.clientHeight);
+  state.regions = [full];
+  state.balls = createBalls(full, state.levelCfg.ballCount, state.levelCfg.speedMin, state.levelCfg.speedMax);
+
+  updateHud();
+}
+
+function startNewRun() {
+  state.difficultyKey = difficultySelect.value;
+  state.runScore = 0;
+  state.scoreSaved = false;
+  startLevel(1);
+}
+
+function distancePointToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(px - x1, py - y1);
+  }
+
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+  const sx = x1 + t * dx;
+  const sy = y1 + t * dy;
+  return Math.hypot(px - sx, py - sy);
+}
+
+function startCut(x, y) {
+  if (state.status !== 'running' || state.activeCut) {
+    return;
+  }
+
+  const region = pickRegionAt(x, y);
+  if (!region) {
+    return;
+  }
+
+  if (state.orientation === 'vertical') {
+    if (region.w < BASE.minRegionSize * 2) {
+      return;
+    }
+    const cutX = Math.max(region.x + BASE.minRegionSize, Math.min(region.x + region.w - BASE.minRegionSize, x));
+    state.activeCut = {
+      regionId: region.id,
+      orientation: 'vertical',
+      cut: cutX,
+      negPos: y,
+      posPos: y,
+      negDone: false,
+      posDone: false
+    };
+  } else {
+    if (region.h < BASE.minRegionSize * 2) {
+      return;
+    }
+    const cutY = Math.max(region.y + BASE.minRegionSize, Math.min(region.y + region.h - BASE.minRegionSize, y));
+    state.activeCut = {
+      regionId: region.id,
+      orientation: 'horizontal',
+      cut: cutY,
+      negPos: x,
+      posPos: x,
+      negDone: false,
+      posDone: false
+    };
+  }
+}
+
+function failsActiveCut(region) {
+  if (!state.activeCut) {
+    return false;
+  }
+
+  let x1;
+  let y1;
+  let x2;
+  let y2;
+
+  if (state.activeCut.orientation === 'vertical') {
+    x1 = state.activeCut.cut;
+    x2 = state.activeCut.cut;
+    y1 = state.activeCut.negPos;
+    y2 = state.activeCut.posPos;
+  } else {
+    y1 = state.activeCut.cut;
+    y2 = state.activeCut.cut;
+    x1 = state.activeCut.negPos;
+    x2 = state.activeCut.posPos;
+  }
+
+  for (const ball of state.balls) {
+    if (ball.regionId !== region.id) {
+      continue;
+    }
+    if (distancePointToSegment(ball.x, ball.y, x1, y1, x2, y2) <= ball.r + BASE.wallThickness * 0.5) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function speedUpBalls() {
+  for (const ball of state.balls) {
+    ball.vx *= state.levelCfg.speedUpPerCut;
+    ball.vy *= state.levelCfg.speedUpPerCut;
+  }
+}
+
+function awardPoints(beforeCapture, afterCapture) {
+  const delta = Math.max(0, afterCapture - beforeCapture);
+  const diff = currentDifficulty();
+  const points = delta * 10000 * diff.scoreMult * (1 + state.level * 0.15);
+  state.runScore += points;
+}
+
+function settleSplit(region, orientation, cut) {
+  const beforeCapture = captureRatio();
+
+  let a;
+  let b;
+  if (orientation === 'vertical') {
+    a = makeRegion(region.x, region.y, cut - region.x, region.h);
+    b = makeRegion(cut, region.y, region.x + region.w - cut, region.h);
+  } else {
+    a = makeRegion(region.x, region.y, region.w, cut - region.y);
+    b = makeRegion(region.x, cut, region.w, region.y + region.h - cut);
+  }
+
+  const next = state.regions.filter((r) => r.id !== region.id);
+  next.push(a, b);
+  state.regions = next;
+  assignBallRegions();
+
+  const aHasBall = state.balls.some((ball) => ball.regionId === a.id);
+  const bHasBall = state.balls.some((ball) => ball.regionId === b.id);
+
+  if (!aHasBall) {
+    state.regions = state.regions.filter((r) => r.id !== a.id);
+  }
+  if (!bHasBall) {
+    state.regions = state.regions.filter((r) => r.id !== b.id);
+  }
+
+  const afterCapture = captureRatio();
+  awardPoints(beforeCapture, afterCapture);
+
+  state.cutsCompleted += 1;
+  speedUpBalls();
+
+  if (afterCapture >= state.levelCfg.targetCapture) {
+    state.runScore += 500 * state.level * currentDifficulty().scoreMult;
+    state.status = 'levelwon';
+  }
+}
+
+function updateBalls(dt) {
+  for (const ball of state.balls) {
+    const region = state.regions.find((r) => r.id === ball.regionId);
+    if (!region) {
+      continue;
+    }
+
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+
+    const left = region.x + ball.r;
+    const right = region.x + region.w - ball.r;
+    const top = region.y + ball.r;
+    const bottom = region.y + region.h - ball.r;
+
+    if (ball.x < left) {
+      ball.x = left;
+      ball.vx *= -1;
+    } else if (ball.x > right) {
+      ball.x = right;
+      ball.vx *= -1;
+    }
+
+    if (ball.y < top) {
+      ball.y = top;
+      ball.vy *= -1;
+    } else if (ball.y > bottom) {
+      ball.y = bottom;
+      ball.vy *= -1;
+    }
+  }
+}
+
+function updateActiveCut(dt) {
+  if (!state.activeCut || state.status !== 'running') {
+    return;
+  }
+
+  const region = state.regions.find((r) => r.id === state.activeCut.regionId);
+  if (!region) {
+    state.activeCut = null;
+    return;
+  }
+
+  const step = state.levelCfg.wallSpeed * dt;
+
+  if (state.activeCut.orientation === 'vertical') {
+    state.activeCut.negPos = Math.max(region.y, state.activeCut.negPos - step);
+    state.activeCut.posPos = Math.min(region.y + region.h, state.activeCut.posPos + step);
+    state.activeCut.negDone = state.activeCut.negPos <= region.y;
+    state.activeCut.posDone = state.activeCut.posPos >= region.y + region.h;
+  } else {
+    state.activeCut.negPos = Math.max(region.x, state.activeCut.negPos - step);
+    state.activeCut.posPos = Math.min(region.x + region.w, state.activeCut.posPos + step);
+    state.activeCut.negDone = state.activeCut.negPos <= region.x;
+    state.activeCut.posDone = state.activeCut.posPos >= region.x + region.w;
+  }
+
+  if (failsActiveCut(region)) {
+    state.activeCut = null;
+    state.status = 'gameover';
+    saveRunScoreIfNeeded();
+    updateHud();
+    return;
+  }
+
+  if (state.activeCut.negDone && state.activeCut.posDone) {
+    settleSplit(region, state.activeCut.orientation, state.activeCut.cut);
+    state.activeCut = null;
+    updateHud();
+  }
+}
+
+function drawRegions() {
+  ctx.fillStyle = '#d6d3cc';
+  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+  for (const region of state.regions) {
+    ctx.fillStyle = '#fffaf0';
+    ctx.fillRect(region.x, region.y, region.w, region.h);
+    ctx.strokeStyle = '#232323';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(region.x, region.y, region.w, region.h);
+  }
+}
+
+function drawActiveCut() {
+  if (!state.activeCut) {
+    return;
+  }
+
+  ctx.strokeStyle = '#c0252d';
+  ctx.lineWidth = BASE.wallThickness;
+  ctx.beginPath();
+  if (state.activeCut.orientation === 'vertical') {
+    ctx.moveTo(state.activeCut.cut, state.activeCut.negPos);
+    ctx.lineTo(state.activeCut.cut, state.activeCut.posPos);
+  } else {
+    ctx.moveTo(state.activeCut.negPos, state.activeCut.cut);
+    ctx.lineTo(state.activeCut.posPos, state.activeCut.cut);
+  }
+  ctx.stroke();
+}
+
+function drawBalls() {
+  for (const ball of state.balls) {
+    ctx.beginPath();
+    ctx.fillStyle = '#1a1a1a';
+    ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.fillStyle = '#ffffffb0';
+    ctx.arc(ball.x - ball.r * 0.33, ball.y - ball.r * 0.33, ball.r * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawOverlayMessage() {
+  if (state.status === 'running') {
+    return;
+  }
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 32px Trebuchet MS, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  if (state.status === 'levelwon') {
+    ctx.fillText('LEVEL CLEAR', canvas.clientWidth * 0.5, canvas.clientHeight * 0.48);
+    ctx.font = '700 20px Trebuchet MS, sans-serif';
+    ctx.fillText('Press Next Level', canvas.clientWidth * 0.5, canvas.clientHeight * 0.56);
+  } else {
+    ctx.fillText('RUN OVER', canvas.clientWidth * 0.5, canvas.clientHeight * 0.5);
+  }
+}
+
+function draw() {
+  drawRegions();
+  drawActiveCut();
+  drawBalls();
+  drawOverlayMessage();
+}
+
+function toggleOrientation() {
+  state.orientation = state.orientation === 'vertical' ? 'horizontal' : 'vertical';
+  updateHud();
+}
+
+let lastTs = performance.now();
+function tick(ts) {
+  const dt = Math.min((ts - lastTs) / 1000, 0.033);
+  lastTs = ts;
+
+  if (state.status === 'running') {
+    updateBalls(dt);
+    updateActiveCut(dt);
+  }
+
+  draw();
+  requestAnimationFrame(tick);
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  startCut(e.clientX - rect.left, e.clientY - rect.top);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    toggleOrientation();
+  }
+
+  if (e.code === 'Enter' && state.status === 'levelwon') {
+    startLevel(state.level + 1);
+  }
+});
+
+restartBtn.addEventListener('click', () => {
+  startNewRun();
+});
+
+nextLevelBtn.addEventListener('click', () => {
+  if (state.status === 'levelwon') {
+    startLevel(state.level + 1);
+  }
+});
+
+if (toggleAimBtn) {
+  toggleAimBtn.addEventListener('click', () => {
+    toggleOrientation();
+  });
+}
+
+difficultySelect.addEventListener('change', () => {
+  startNewRun();
+});
+
+window.addEventListener('resize', () => {
+  const previousWidth = canvas.clientWidth || 1;
+  const previousHeight = canvas.clientHeight || 1;
+  setCanvasSize();
+  const sx = canvas.clientWidth / previousWidth;
+  const sy = canvas.clientHeight / previousHeight;
+
+  for (const region of state.regions) {
+    region.x *= sx;
+    region.y *= sy;
+    region.w *= sx;
+    region.h *= sy;
+  }
+
+  for (const ball of state.balls) {
+    ball.x *= sx;
+    ball.y *= sy;
+  }
+
+  if (state.activeCut) {
+    if (state.activeCut.orientation === 'vertical') {
+      state.activeCut.cut *= sx;
+      state.activeCut.negPos *= sy;
+      state.activeCut.posPos *= sy;
+    } else {
+      state.activeCut.cut *= sy;
+      state.activeCut.negPos *= sx;
+      state.activeCut.posPos *= sx;
+    }
+  }
+
+  updateHud();
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
+      // Ignore registration failures in unsupported/local dev contexts.
+    });
+  });
+}
+
+setCanvasSize();
+renderHighScores();
+startNewRun();
+requestAnimationFrame(tick);

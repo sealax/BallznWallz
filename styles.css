@@ -1,0 +1,162 @@
+:root {
+  color-scheme: light;
+  --bg-1: #f6efe2;
+  --bg-2: #f5d9b8;
+  --ink: #202025;
+  --accent: #b8582d;
+  --panel: rgba(255, 255, 255, 0.82);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Trebuchet MS", "Avenir Next", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 20% 15%, #fff2df 0%, transparent 36%),
+    radial-gradient(circle at 80% 80%, #ffd8b4 0%, transparent 40%),
+    linear-gradient(150deg, var(--bg-1), var(--bg-2));
+}
+
+.game-shell {
+  width: min(1040px, 96vw);
+  margin: 1rem auto;
+  display: grid;
+  gap: 0.75rem;
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.hud {
+  display: grid;
+  gap: 0.7rem;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(32, 32, 37, 0.18);
+  border-radius: 14px;
+  padding: 0.8rem 1rem;
+}
+
+h1,
+h2 {
+  margin: 0;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: clamp(1.1rem, 2.2vw, 1.5rem);
+}
+
+h2 {
+  font-size: 0.95rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.65rem;
+}
+
+label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+select,
+input,
+button {
+  border: 1px solid rgba(32, 32, 37, 0.28);
+  border-radius: 10px;
+  padding: 0.5rem 0.72rem;
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button:hover:not([disabled]) {
+  filter: brightness(1.08);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  font-weight: 700;
+}
+
+canvas {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: rgba(255, 255, 255, 0.55);
+  border: 2px solid rgba(32, 32, 37, 0.26);
+  border-radius: 16px;
+  box-shadow: 0 12px 26px rgba(20, 20, 22, 0.12);
+  touch-action: none;
+}
+
+.scoreboard {
+  background: var(--panel);
+  border: 1px solid rgba(32, 32, 37, 0.18);
+  border-radius: 14px;
+  padding: 0.7rem 1rem;
+}
+
+.scoreboard ol {
+  margin: 0.6rem 0 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.scoreboard li {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.help {
+  margin: 0;
+  padding: 0.3rem 0.2rem;
+  font-size: 0.93rem;
+}
+
+@media (max-width: 720px) {
+  .game-shell {
+    width: 98vw;
+    margin: 0.4rem auto;
+    gap: 0.5rem;
+  }
+
+  .hud {
+    padding: 0.65rem 0.7rem;
+  }
+
+  .controls {
+    gap: 0.45rem;
+  }
+
+  select,
+  input,
+  button {
+    min-height: 40px;
+  }
+}
