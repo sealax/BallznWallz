@@ -606,7 +606,25 @@ difficultySelect.addEventListener('change', () => {
   startNewRun();
 });
 
+
+const syncViewportHeight = () => {
+  const vv = window.visualViewport;
+  const height = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', Math.round(height) + 'px');
+};
+
+if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+  document.body.classList.add('standalone');
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewportHeight);
+}
+
+window.addEventListener('orientationchange', syncViewportHeight);
+
 window.addEventListener('resize', () => {
+  syncViewportHeight();
   const previousWidth = canvas.clientWidth || 1;
   const previousHeight = canvas.clientHeight || 1;
   setCanvasSize();
@@ -648,6 +666,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+syncViewportHeight();
 setCanvasSize();
 renderHighScores();
 startNewRun();
