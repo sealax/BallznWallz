@@ -28,7 +28,9 @@ const DIFFICULTY = {
     speedUpPerCut: 1.05,
     baseWallSpeed: 430,
     targetCapture: 0.72,
-    scoreMult: 0.9
+    scoreMult: 0.9,
+    ballGrowthInterval: 2,
+    passiveSpeedRampPerSec: 0
   },
   normal: {
     label: 'Normal',
@@ -38,7 +40,9 @@ const DIFFICULTY = {
     speedUpPerCut: 1.08,
     baseWallSpeed: 380,
     targetCapture: 0.75,
-    scoreMult: 1
+    scoreMult: 1,
+    ballGrowthInterval: 2,
+    passiveSpeedRampPerSec: 0
   },
   hard: {
     label: 'Hard',
@@ -48,7 +52,21 @@ const DIFFICULTY = {
     speedUpPerCut: 1.11,
     baseWallSpeed: 330,
     targetCapture: 0.8,
-    scoreMult: 1.2
+    scoreMult: 1.2,
+    ballGrowthInterval: 2,
+    passiveSpeedRampPerSec: 0
+  },
+  elite: {
+    label: 'Elite',
+    baseBalls: 5,
+    speedMin: 150,
+    speedMax: 210,
+    speedUpPerCut: 1.14,
+    baseWallSpeed: 300,
+    targetCapture: 0.84,
+    scoreMult: 1.45,
+    ballGrowthInterval: 1,
+    passiveSpeedRampPerSec: 0.012
   }
 };
 
@@ -76,6 +94,89 @@ const state = {
   levelClearReason: null,
   pointerId: null
 };
+
+const feedback = {
+  audioCtx: null
+};
+
+function ensureAudioReady() {
+  if (!window.AudioContext && !window.webkitAudioContext) {
+    return null;
+  }
+
+  if (!feedback.audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    feedback.audioCtx = new Ctx();
+  }
+
+  if (feedback.audioCtx.state === 'suspended') {
+    feedback.audioCtx.resume().catch(() => {});
+  }
+
+  return feedback.audioCtx;
+}
+
+function playTone(freq, duration, type, volume) {
+  const audioCtx = ensureAudioReady();
+  if (!audioCtx) {
+    return;
+  }
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.value = freq;
+
+  const now = audioCtx.currentTime;
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(volume || 0.06, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + duration);
+}
+
+function vibratePattern(pattern) {
+  if (typeof navigator.vibrate === 'function') {
+    navigator.vibrate(pattern);
+  }
+}
+
+function triggerFeedback(kind) {
+  if (kind === 'toggle') {
+    playTone(740, 0.06, 'triangle', 0.045);
+    vibratePattern(12);
+    return;
+  }
+
+  if (kind === 'cutStart') {
+    playTone(520, 0.05, 'square', 0.05);
+    vibratePattern(10);
+    return;
+  }
+
+  if (kind === 'split') {
+    playTone(640, 0.05, 'triangle', 0.05);
+    setTimeout(() => playTone(820, 0.06, 'triangle', 0.05), 45);
+    vibratePattern([10, 20, 14]);
+    return;
+  }
+
+  if (kind === 'levelwon') {
+    playTone(660, 0.06, 'sine', 0.05);
+    setTimeout(() => playTone(860, 0.07, 'sine', 0.05), 65);
+    setTimeout(() => playTone(1060, 0.08, 'sine', 0.05), 130);
+    vibratePattern([16, 18, 16]);
+    return;
+  }
+
+  if (kind === 'gameover') {
+    playTone(180, 0.12, 'sawtooth', 0.07);
+    vibratePattern([24, 30, 24]);
+  }
+}
 
 function rand(min, max) {
   return min + Math.random() * (max - min);
@@ -118,13 +219,15 @@ function currentDifficulty() {
 
 function computeLevelConfig(level) {
   const d = currentDifficulty();
+  const growthInterval = d.ballGrowthInterval || 2;
   return {
-    ballCount: d.baseBalls + Math.floor((level - 1) / 2),
+    ballCount: d.baseBalls + Math.floor((level - 1) / growthInterval),
     speedMin: d.speedMin + level * 7,
     speedMax: d.speedMax + level * 9,
     speedUpPerCut: d.speedUpPerCut,
-    wallSpeed: Math.max(180, d.baseWallSpeed - level * 9),
-    targetCapture: Math.min(0.9, d.targetCapture + level * 0.01)
+    wallSpeed: Math.max(170, d.baseWallSpeed - level * 9),
+    targetCapture: Math.min(0.9, d.targetCapture + level * 0.01),
+    passiveSpeedRampPerSec: (d.passiveSpeedRampPerSec || 0) * (1 + (level - 1) * 0.08)
   };
 }
 
@@ -398,6 +501,7 @@ function startCutFromPreview(x, y) {
     };
   }
 
+  triggerFeedback('cutStart');
   state.previewCut = null;
 }
 
@@ -480,25 +584,36 @@ function settleSplit(region, orientation, cut) {
 
   state.cutsCompleted += 1;
   speedUpBalls();
+  triggerFeedback('split');
 
   if (afterCapture >= state.levelCfg.targetCapture) {
     state.runScore += 500 * state.level * currentDifficulty().scoreMult;
     state.levelClearReason = 'target';
     state.status = 'levelwon';
+    triggerFeedback('levelwon');
     return;
   }
 
   if (!hasAnyValidCut()) {
     state.levelClearReason = 'stalled';
     state.status = 'levelwon';
+    triggerFeedback('levelwon');
   }
 }
 
 function updateBalls(dt) {
+  const passiveRamp = state.levelCfg ? state.levelCfg.passiveSpeedRampPerSec : 0;
+  const frameBoost = passiveRamp > 0 ? 1 + passiveRamp * dt : 1;
+
   for (const ball of state.balls) {
     const region = state.regions.find((r) => r.id === ball.regionId);
     if (!region) {
       continue;
+    }
+
+    if (frameBoost !== 1) {
+      ball.vx *= frameBoost;
+      ball.vy *= frameBoost;
     }
 
     ball.x += ball.vx * dt;
@@ -555,6 +670,7 @@ function updateActiveCut(dt) {
   if (failsActiveCut(region)) {
     state.activeCut = null;
     state.status = 'gameover';
+    triggerFeedback('gameover');
     saveRunScoreIfNeeded();
     updateHud();
     return;
@@ -670,6 +786,7 @@ function draw() {
 
 function toggleOrientation() {
   state.orientation = state.orientation === 'vertical' ? 'horizontal' : 'vertical';
+  triggerFeedback('toggle');
   updateHud();
 }
 
@@ -693,6 +810,8 @@ function tick(ts) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
+  ensureAudioReady();
+
   if (state.status !== 'running' || state.activeCut) {
     return;
   }
@@ -748,6 +867,7 @@ nextLevelBtn.addEventListener('click', () => {
 
 if (toggleAimBtn) {
   toggleAimBtn.addEventListener('click', () => {
+    ensureAudioReady();
     toggleOrientation();
   });
 }
