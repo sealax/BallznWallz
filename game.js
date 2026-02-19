@@ -295,8 +295,8 @@ function updateHud() {
   levelInfoEl.textContent = `${d.label} | L${state.level}`;
   ballCountEl.textContent = `Balls: ${state.balls.length}`;
   regionCountEl.textContent = `Cuts: ${state.cutsCompleted} | Aim: ${state.orientation === 'vertical' ? 'V' : 'H'}`;
-  scoreEl.textContent = `Score: ${Math.round(state.runScore)} | ${formatPct(captureRatio())}`;
-  statusEl.textContent = statusText();
+  scoreEl.textContent = "Captured: " + formatPct(captureRatio()) + " | Score: " + Math.round(state.runScore);
+  statusEl.textContent = "";
   nextLevelBtn.disabled = state.status !== 'levelwon';
   syncAimButton();
 }
@@ -795,6 +795,14 @@ function getCanvasPos(e) {
   return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
 
+function isCenterTap(x, y) {
+  const centerX = canvas.clientWidth * 0.5;
+  const centerY = canvas.clientHeight * 0.5;
+  const dx = Math.abs(x - centerX);
+  const dy = Math.abs(y - centerY);
+  return dx <= canvas.clientWidth * 0.2 && dy <= canvas.clientHeight * 0.16;
+}
+
 let lastTs = performance.now();
 function tick(ts) {
   const dt = Math.min((ts - lastTs) / 1000, 0.033);
@@ -812,13 +820,20 @@ function tick(ts) {
 canvas.addEventListener('pointerdown', (e) => {
   ensureAudioReady();
 
+  const pos = getCanvasPos(e);
+  if (state.status === 'levelwon') {
+    if (isCenterTap(pos.x, pos.y)) {
+      startLevel(state.level + 1);
+    }
+    return;
+  }
+
   if (state.status !== 'running' || state.activeCut) {
     return;
   }
 
   state.pointerId = e.pointerId;
   canvas.setPointerCapture(e.pointerId);
-  const pos = getCanvasPos(e);
   updatePreview(pos.x, pos.y);
 });
 

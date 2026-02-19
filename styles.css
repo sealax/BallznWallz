@@ -97,6 +97,15 @@ button[disabled] {
   font-size: 0.92rem;
 }
 
+#score {
+  white-space: nowrap;
+  font-weight: 900;
+}
+
+#status {
+  display: none;
+}
+
 canvas {
   width: 100%;
   height: auto;
@@ -157,22 +166,28 @@ canvas {
     width: 100vw;
     margin: 0;
     min-height: var(--app-height, 100dvh);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
     padding:
-      max(0.3rem, env(safe-area-inset-top))
-      max(0.3rem, env(safe-area-inset-right))
-      max(0.45rem, env(safe-area-inset-bottom))
-      max(0.3rem, env(safe-area-inset-left));
-    gap: 0.45rem;
+      max(0.2rem, env(safe-area-inset-top))
+      max(0.22rem, env(safe-area-inset-right))
+      max(0.28rem, env(safe-area-inset-bottom))
+      max(0.22rem, env(safe-area-inset-left));
+    gap: 0.26rem;
   }
 
   .hud {
-    padding: 0.55rem 0.62rem;
-    border-radius: 11px;
-    gap: 0.5rem;
+    padding: 0.38rem 0.46rem;
+    border-radius: 10px;
+    gap: 0.3rem;
+  }
+
+  h1 {
+    font-size: 0.92rem;
+    letter-spacing: 0.04em;
   }
 
   .controls {
-    gap: 0.4rem;
+    gap: 0.28rem;
   }
 
   .mobile-hide {
@@ -182,24 +197,53 @@ canvas {
   select,
   input,
   button {
-    min-height: 44px;
-    font-size: 16px;
+    min-height: 36px;
+    font-size: 14px;
+    padding: 0.34rem 0.52rem;
   }
 
   .stats {
-    gap: 0.42rem;
-    font-size: 0.82rem;
+    gap: 0.28rem;
+    font-size: 0.71rem;
+    line-height: 1.15;
+  }
+
+  #score {
+    order: -1;
+    flex: 1 1 100%;
+    text-align: center;
+    font-size: 0.8rem;
+    background: rgba(16, 32, 55, 0.1);
+    border-radius: 8px;
+    padding: 0.14rem 0.3rem;
   }
 
   canvas {
     height: 100%;
-    min-height: 0;
+    min-height: 60dvh;
     aspect-ratio: auto;
     border-radius: 12px;
   }
 
   .scoreboard {
-    padding: 0.4rem 0.62rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 10px;
+    align-self: end;
+  }
+
+  .scoreboard summary {
+    font-size: 0.72rem;
+  }
+
+  .scoreboard ol {
+    margin-top: 0.32rem;
+    gap: 0.18rem;
+    max-height: 4.8rem;
+    overflow: auto;
+  }
+
+  .scoreboard li {
+    font-size: 0.72rem;
   }
 
   .scoreboard:not([open]) ol {
@@ -209,40 +253,43 @@ canvas {
   #toggleAimBtn {
     position: fixed;
     right: max(0.55rem, env(safe-area-inset-right));
-    bottom: max(0.75rem, env(safe-area-inset-bottom));
-    width: 60px;
-    height: 60px;
-    min-height: 60px;
+    bottom: max(0.55rem, env(safe-area-inset-bottom));
+    width: 58px;
+    height: 58px;
+    min-height: 58px;
     border-radius: 999px;
     z-index: 22;
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.34);
-    font-size: 1.05rem;
+    font-size: 1.02rem;
     padding: 0;
   }
 
+  #installHint {
+    font-size: 0.72rem;
+    padding: 0.24rem 0.32rem;
+  }
+
   .help {
-    font-size: 0.78rem;
-    line-height: 1.3;
+    display: none;
   }
 }
 
 @media (max-width: 900px) and (orientation: landscape) {
   .game-shell {
     grid-template-columns: 1.42fr 0.58fr;
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     grid-template-areas:
       "hud hud"
       "canvas scores"
-      "hint hint"
-      "help help";
+      "hint hint";
     column-gap: 0.45rem;
   }
 
   .hud { grid-area: hud; }
-  canvas { grid-area: canvas; }
+  canvas { grid-area: canvas; min-height: 0; }
   .scoreboard { grid-area: scores; overflow: auto; }
   #installHint { grid-area: hint; }
-  .help { grid-area: help; }
+  .help { display: none; }
 }
 
 @media (display-mode: standalone) and (max-width: 900px) {
