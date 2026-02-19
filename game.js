@@ -56,7 +56,7 @@ const BASE = {
   minRadius: 7,
   maxRadius: 12,
   wallThickness: 6,
-  minRegionSize: 70
+  minCutPadding: 18
 };
 
 const state = {
@@ -73,6 +73,7 @@ const state = {
   scoreSaved: false,
   difficultyKey: 'normal',
   levelCfg: null,
+  levelClearReason: null,
   pointerId: null
 };
 
@@ -166,9 +167,14 @@ function statusText() {
   if (state.status === 'gameover') {
     return 'Run Over: ball hit building wall.';
   }
+
   if (state.status === 'levelwon') {
+    if (state.levelClearReason === 'stalled') {
+      return `No valid cuts left. Level ${state.level} cleared.`;
+    }
     return `Level ${state.level} cleared. Continue to ${state.level + 1}.`;
   }
+
   return `Goal: capture ${formatPct(state.levelCfg.targetCapture)} this level.`;
 }
 
@@ -250,6 +256,7 @@ function startLevel(level) {
   state.orientation = 'vertical';
   state.cutsCompleted = 0;
   state.status = 'running';
+  state.levelClearReason = null;
 
   const full = makeRegion(0, 0, canvas.clientWidth, canvas.clientHeight);
   state.regions = [full];
@@ -276,26 +283,72 @@ function distancePointToSegment(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - sx, py - sy);
 }
 
+function maxBallRadiusInRegion(regionId) {
+  let maxRadius = BASE.minRadius;
+  for (const ball of state.balls) {
+    if (ball.regionId === regionId) {
+      maxRadius = Math.max(maxRadius, ball.r);
+    }
+  }
+  return maxRadius;
+}
+
+function cutPaddingForRegion(regionId) {
+  return Math.max(BASE.minCutPadding, maxBallRadiusInRegion(regionId) * 2 + 6);
+}
+
+function buildCutCandidate(region, orientation, x, y) {
+  const padding = cutPaddingForRegion(region.id);
+
+  if (orientation === 'vertical') {
+    if (region.w < padding * 2) {
+      return null;
+    }
+    const cut = Math.max(region.x + padding, Math.min(region.x + region.w - padding, x));
+    return { region, orientation: 'vertical', cut, cursorAxis: y };
+  }
+
+  if (region.h < padding * 2) {
+    return null;
+  }
+  const cut = Math.max(region.y + padding, Math.min(region.y + region.h - padding, y));
+  return { region, orientation: 'horizontal', cut, cursorAxis: x };
+}
+
+function hasAnyValidCut() {
+  for (const region of state.regions) {
+    const centerX = region.x + region.w * 0.5;
+    const centerY = region.y + region.h * 0.5;
+    if (buildCutCandidate(region, 'vertical', centerX, centerY)) {
+      return true;
+    }
+    if (buildCutCandidate(region, 'horizontal', centerX, centerY)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function getCutCandidate(x, y) {
   const region = pickRegionAt(x, y);
   if (!region) {
     return null;
   }
 
-  const orientation = state.orientation;
-  if (orientation === 'vertical') {
-    if (region.w < BASE.minRegionSize * 2) {
-      return null;
-    }
-    const cut = Math.max(region.x + BASE.minRegionSize, Math.min(region.x + region.w - BASE.minRegionSize, x));
-    return { region, orientation, cut, cursorAxis: y };
+  const preferred = buildCutCandidate(region, state.orientation, x, y);
+  if (preferred) {
+    return preferred;
   }
 
-  if (region.h < BASE.minRegionSize * 2) {
-    return null;
+  const fallbackOrientation = state.orientation === 'vertical' ? 'horizontal' : 'vertical';
+  const fallback = buildCutCandidate(region, fallbackOrientation, x, y);
+  if (fallback) {
+    state.orientation = fallbackOrientation;
+    syncAimButton();
+    return fallback;
   }
-  const cut = Math.max(region.y + BASE.minRegionSize, Math.min(region.y + region.h - BASE.minRegionSize, y));
-  return { region, orientation, cut, cursorAxis: x };
+
+  return null;
 }
 
 function updatePreview(x, y) {
@@ -430,6 +483,13 @@ function settleSplit(region, orientation, cut) {
 
   if (afterCapture >= state.levelCfg.targetCapture) {
     state.runScore += 500 * state.level * currentDifficulty().scoreMult;
+    state.levelClearReason = 'target';
+    state.status = 'levelwon';
+    return;
+  }
+
+  if (!hasAnyValidCut()) {
+    state.levelClearReason = 'stalled';
     state.status = 'levelwon';
   }
 }
