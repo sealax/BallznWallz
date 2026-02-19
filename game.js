@@ -13,6 +13,8 @@ const restartBtn = document.getElementById('restartBtn');
 const nextLevelBtn = document.getElementById('nextLevelBtn');
 const toggleAimBtn = document.getElementById('toggleAimBtn');
 const highScoresListEl = document.getElementById('highScoresList');
+const installHintEl = document.getElementById('installHint');
+const scoreboardPanelEl = document.getElementById('scoreboardPanel');
 
 const HIGH_SCORES_KEY = 'ball_splitter_high_scores_v1';
 const MAX_HIGH_SCORES = 10;
@@ -62,6 +64,7 @@ const state = {
   regions: [],
   nextRegionId: 1,
   activeCut: null,
+  previewCut: null,
   orientation: 'vertical',
   status: 'running',
   level: 1,
@@ -69,7 +72,8 @@ const state = {
   runScore: 0,
   scoreSaved: false,
   difficultyKey: 'normal',
-  levelCfg: null
+  levelCfg: null,
+  pointerId: null
 };
 
 function rand(min, max) {
@@ -133,7 +137,6 @@ function setCanvasSize() {
 
 function createBalls(region, count, speedMin, speedMax) {
   const balls = [];
-
   for (let i = 0; i < count; i += 1) {
     const r = rand(BASE.minRadius, BASE.maxRadius);
     const angle = rand(0, Math.PI * 2);
@@ -147,7 +150,6 @@ function createBalls(region, count, speedMin, speedMax) {
       regionId: region.id
     });
   }
-
   return balls;
 }
 
@@ -162,26 +164,29 @@ function assignBallRegions() {
 
 function statusText() {
   if (state.status === 'gameover') {
-    return 'Run Over: a ball touched the growing wall.';
+    return 'Run Over: ball hit building wall.';
   }
   if (state.status === 'levelwon') {
-    return `Level ${state.level} cleared. Continue to Level ${state.level + 1}.`;
+    return `Level ${state.level} cleared. Continue to ${state.level + 1}.`;
   }
   return `Goal: capture ${formatPct(state.levelCfg.targetCapture)} this level.`;
 }
 
 function syncAimButton() {
-  if (toggleAimBtn) {
-    toggleAimBtn.textContent = `Aim: ${state.orientation === 'vertical' ? 'Vertical' : 'Horizontal'}`;
+  if (!toggleAimBtn) {
+    return;
   }
+  const mode = state.orientation === 'vertical' ? 'V' : 'H';
+  toggleAimBtn.textContent = mode;
+  toggleAimBtn.setAttribute('aria-label', `Aim ${mode}`);
 }
 
 function updateHud() {
   const d = currentDifficulty();
-  levelInfoEl.textContent = `Difficulty: ${d.label} | Level: ${state.level}`;
+  levelInfoEl.textContent = `${d.label} | L${state.level}`;
   ballCountEl.textContent = `Balls: ${state.balls.length}`;
-  regionCountEl.textContent = `Cuts: ${state.cutsCompleted} | Aim: ${state.orientation === 'vertical' ? 'Vertical' : 'Horizontal'} (Space)`;
-  scoreEl.textContent = `Run Score: ${Math.round(state.runScore)} | Captured: ${formatPct(captureRatio())}`;
+  regionCountEl.textContent = `Cuts: ${state.cutsCompleted} | Aim: ${state.orientation === 'vertical' ? 'V' : 'H'}`;
+  scoreEl.textContent = `Score: ${Math.round(state.runScore)} | ${formatPct(captureRatio())}`;
   statusEl.textContent = statusText();
   nextLevelBtn.disabled = state.status !== 'levelwon';
   syncAimButton();
@@ -204,7 +209,6 @@ function saveHighScores(scores) {
 function renderHighScores() {
   const scores = loadHighScores();
   highScoresListEl.innerHTML = '';
-
   if (!scores.length) {
     const li = document.createElement('li');
     li.textContent = 'No scores yet';
@@ -223,7 +227,6 @@ function saveRunScoreIfNeeded() {
   if (state.scoreSaved || state.runScore <= 0) {
     return;
   }
-
   const scores = loadHighScores();
   scores.push({
     name: (playerNameEl.value || 'Player').trim().slice(0, 12) || 'Player',
@@ -233,8 +236,7 @@ function saveRunScoreIfNeeded() {
   });
 
   scores.sort((a, b) => b.score - a.score);
-  const top = scores.slice(0, MAX_HIGH_SCORES);
-  saveHighScores(top);
+  saveHighScores(scores.slice(0, MAX_HIGH_SCORES));
   state.scoreSaved = true;
   renderHighScores();
 }
@@ -244,6 +246,7 @@ function startLevel(level) {
   state.levelCfg = computeLevelConfig(level);
   state.nextRegionId = 1;
   state.activeCut = null;
+  state.previewCut = null;
   state.orientation = 'vertical';
   state.cutsCompleted = 0;
   state.status = 'running';
@@ -251,7 +254,6 @@ function startLevel(level) {
   const full = makeRegion(0, 0, canvas.clientWidth, canvas.clientHeight);
   state.regions = [full];
   state.balls = createBalls(full, state.levelCfg.ballCount, state.levelCfg.speedMin, state.levelCfg.speedMax);
-
   updateHud();
 }
 
@@ -268,52 +270,82 @@ function distancePointToSegment(px, py, x1, y1, x2, y2) {
   if (dx === 0 && dy === 0) {
     return Math.hypot(px - x1, py - y1);
   }
-
   const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
   const sx = x1 + t * dx;
   const sy = y1 + t * dy;
   return Math.hypot(px - sx, py - sy);
 }
 
-function startCut(x, y) {
-  if (state.status !== 'running' || state.activeCut) {
-    return;
-  }
-
+function getCutCandidate(x, y) {
   const region = pickRegionAt(x, y);
   if (!region) {
+    return null;
+  }
+
+  const orientation = state.orientation;
+  if (orientation === 'vertical') {
+    if (region.w < BASE.minRegionSize * 2) {
+      return null;
+    }
+    const cut = Math.max(region.x + BASE.minRegionSize, Math.min(region.x + region.w - BASE.minRegionSize, x));
+    return { region, orientation, cut, cursorAxis: y };
+  }
+
+  if (region.h < BASE.minRegionSize * 2) {
+    return null;
+  }
+  const cut = Math.max(region.y + BASE.minRegionSize, Math.min(region.y + region.h - BASE.minRegionSize, y));
+  return { region, orientation, cut, cursorAxis: x };
+}
+
+function updatePreview(x, y) {
+  const candidate = getCutCandidate(x, y);
+  state.previewCut = candidate
+    ? {
+        regionId: candidate.region.id,
+        orientation: candidate.orientation,
+        cut: candidate.cut,
+        cursorAxis: candidate.cursorAxis
+      }
+    : null;
+}
+
+function startCutFromPreview(x, y) {
+  if (!state.previewCut || state.status !== 'running' || state.activeCut) {
     return;
   }
 
-  if (state.orientation === 'vertical') {
-    if (region.w < BASE.minRegionSize * 2) {
-      return;
-    }
-    const cutX = Math.max(region.x + BASE.minRegionSize, Math.min(region.x + region.w - BASE.minRegionSize, x));
+  const region = state.regions.find((r) => r.id === state.previewCut.regionId);
+  if (!region) {
+    state.previewCut = null;
+    return;
+  }
+
+  if (state.previewCut.orientation === 'vertical') {
+    const pos = Math.max(region.y, Math.min(region.y + region.h, y));
     state.activeCut = {
       regionId: region.id,
       orientation: 'vertical',
-      cut: cutX,
-      negPos: y,
-      posPos: y,
+      cut: state.previewCut.cut,
+      negPos: pos,
+      posPos: pos,
       negDone: false,
       posDone: false
     };
   } else {
-    if (region.h < BASE.minRegionSize * 2) {
-      return;
-    }
-    const cutY = Math.max(region.y + BASE.minRegionSize, Math.min(region.y + region.h - BASE.minRegionSize, y));
+    const pos = Math.max(region.x, Math.min(region.x + region.w, x));
     state.activeCut = {
       regionId: region.id,
       orientation: 'horizontal',
-      cut: cutY,
-      negPos: x,
-      posPos: x,
+      cut: state.previewCut.cut,
+      negPos: pos,
+      posPos: pos,
       negDone: false,
       posDone: false
     };
   }
+
+  state.previewCut = null;
 }
 
 function failsActiveCut(region) {
@@ -346,7 +378,6 @@ function failsActiveCut(region) {
       return true;
     }
   }
-
   return false;
 }
 
@@ -360,8 +391,7 @@ function speedUpBalls() {
 function awardPoints(beforeCapture, afterCapture) {
   const delta = Math.max(0, afterCapture - beforeCapture);
   const diff = currentDifficulty();
-  const points = delta * 10000 * diff.scoreMult * (1 + state.level * 0.15);
-  state.runScore += points;
+  state.runScore += delta * 10000 * diff.scoreMult * (1 + state.level * 0.15);
 }
 
 function settleSplit(region, orientation, cut) {
@@ -478,16 +508,42 @@ function updateActiveCut(dt) {
 }
 
 function drawRegions() {
-  ctx.fillStyle = '#d6d3cc';
+  ctx.fillStyle = '#0b1a2a';
   ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
   for (const region of state.regions) {
-    ctx.fillStyle = '#fffaf0';
+    ctx.fillStyle = '#fff8e8';
     ctx.fillRect(region.x, region.y, region.w, region.h);
-    ctx.strokeStyle = '#232323';
+    ctx.strokeStyle = '#0d243b';
     ctx.lineWidth = 2;
     ctx.strokeRect(region.x, region.y, region.w, region.h);
   }
+}
+
+function drawPreviewCut() {
+  if (!state.previewCut || state.activeCut || state.status !== 'running') {
+    return;
+  }
+
+  const region = state.regions.find((r) => r.id === state.previewCut.regionId);
+  if (!region) {
+    return;
+  }
+
+  ctx.save();
+  ctx.strokeStyle = '#00b8ff';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([7, 6]);
+  ctx.beginPath();
+  if (state.previewCut.orientation === 'vertical') {
+    ctx.moveTo(state.previewCut.cut, region.y);
+    ctx.lineTo(state.previewCut.cut, region.y + region.h);
+  } else {
+    ctx.moveTo(region.x, state.previewCut.cut);
+    ctx.lineTo(region.x + region.w, state.previewCut.cut);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawActiveCut() {
@@ -495,7 +551,7 @@ function drawActiveCut() {
     return;
   }
 
-  ctx.strokeStyle = '#c0252d';
+  ctx.strokeStyle = '#ff2b63';
   ctx.lineWidth = BASE.wallThickness;
   ctx.beginPath();
   if (state.activeCut.orientation === 'vertical') {
@@ -511,12 +567,12 @@ function drawActiveCut() {
 function drawBalls() {
   for (const ball of state.balls) {
     ctx.beginPath();
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = '#112b46';
     ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.beginPath();
-    ctx.fillStyle = '#ffffffb0';
+    ctx.fillStyle = '#ffffffb8';
     ctx.arc(ball.x - ball.r * 0.33, ball.y - ball.r * 0.33, ball.r * 0.36, 0, Math.PI * 2);
     ctx.fill();
   }
@@ -527,18 +583,18 @@ function drawOverlayMessage() {
     return;
   }
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillStyle = 'rgba(6, 13, 24, 0.55)';
   ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
   ctx.fillStyle = '#ffffff';
-  ctx.font = '700 32px Trebuchet MS, sans-serif';
+  ctx.font = '700 30px Trebuchet MS, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   if (state.status === 'levelwon') {
-    ctx.fillText('LEVEL CLEAR', canvas.clientWidth * 0.5, canvas.clientHeight * 0.48);
-    ctx.font = '700 20px Trebuchet MS, sans-serif';
-    ctx.fillText('Press Next Level', canvas.clientWidth * 0.5, canvas.clientHeight * 0.56);
+    ctx.fillText('LEVEL CLEAR', canvas.clientWidth * 0.5, canvas.clientHeight * 0.47);
+    ctx.font = '700 18px Trebuchet MS, sans-serif';
+    ctx.fillText('Tap Next Level', canvas.clientWidth * 0.5, canvas.clientHeight * 0.55);
   } else {
     ctx.fillText('RUN OVER', canvas.clientWidth * 0.5, canvas.clientHeight * 0.5);
   }
@@ -546,6 +602,7 @@ function drawOverlayMessage() {
 
 function draw() {
   drawRegions();
+  drawPreviewCut();
   drawActiveCut();
   drawBalls();
   drawOverlayMessage();
@@ -554,6 +611,11 @@ function draw() {
 function toggleOrientation() {
   state.orientation = state.orientation === 'vertical' ? 'horizontal' : 'vertical';
   updateHud();
+}
+
+function getCanvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
 
 let lastTs = performance.now();
@@ -571,9 +633,37 @@ function tick(ts) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  startCut(e.clientX - rect.left, e.clientY - rect.top);
+  if (state.status !== 'running' || state.activeCut) {
+    return;
+  }
+
+  state.pointerId = e.pointerId;
+  canvas.setPointerCapture(e.pointerId);
+  const pos = getCanvasPos(e);
+  updatePreview(pos.x, pos.y);
 });
+
+canvas.addEventListener('pointermove', (e) => {
+  if (state.pointerId !== e.pointerId || state.activeCut) {
+    return;
+  }
+  const pos = getCanvasPos(e);
+  updatePreview(pos.x, pos.y);
+});
+
+function releasePointer(e) {
+  if (state.pointerId !== e.pointerId) {
+    return;
+  }
+
+  const pos = getCanvasPos(e);
+  startCutFromPreview(pos.x, pos.y);
+  state.pointerId = null;
+  state.previewCut = null;
+}
+
+canvas.addEventListener('pointerup', releasePointer);
+canvas.addEventListener('pointercancel', releasePointer);
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') {
@@ -606,21 +696,26 @@ difficultySelect.addEventListener('change', () => {
   startNewRun();
 });
 
-
 const syncViewportHeight = () => {
   const vv = window.visualViewport;
   const height = vv ? vv.height : window.innerHeight;
   document.documentElement.style.setProperty('--app-height', Math.round(height) + 'px');
 };
 
-if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
-  document.body.classList.add('standalone');
+function updateInstallHint() {
+  if (!installHintEl) {
+    return;
+  }
+
+  const ua = navigator.userAgent || '';
+  const isiOS = /iPhone|iPad|iPod/i.test(ua);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  installHintEl.classList.toggle('hidden', !isiOS || standalone);
 }
 
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', syncViewportHeight);
 }
-
 window.addEventListener('orientationchange', syncViewportHeight);
 
 window.addEventListener('resize', () => {
@@ -660,9 +755,7 @@ window.addEventListener('resize', () => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {
-      // Ignore registration failures in unsupported/local dev contexts.
-    });
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
 }
 
@@ -670,4 +763,12 @@ syncViewportHeight();
 setCanvasSize();
 renderHighScores();
 startNewRun();
+updateInstallHint();
+
+if (scoreboardPanelEl && window.matchMedia('(max-width: 720px)').matches) {
+  scoreboardPanelEl.open = false;
+} else if (scoreboardPanelEl) {
+  scoreboardPanelEl.open = true;
+}
+
 requestAnimationFrame(tick);

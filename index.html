@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#b8582d" />
+  <meta name="theme-color" content="#0f4c81" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Ball Splitter" />
-  <title>Ball Splitter</title>
+  <meta name="apple-mobile-web-app-title" content="BallznWallz" />
+  <title>BallznWallz</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -16,7 +16,7 @@
 <body>
   <main class="game-shell">
     <header class="hud">
-      <h1>Ball Splitter</h1>
+      <h1>BallznWallz</h1>
       <div class="controls">
         <label>
           Difficulty
@@ -26,13 +26,13 @@
             <option value="hard">Hard</option>
           </select>
         </label>
-        <label>
+        <label class="mobile-hide">
           Name
           <input id="playerName" type="text" maxlength="12" value="Player" />
         </label>
         <button id="restartBtn" type="button">New Run</button>
         <button id="nextLevelBtn" type="button" disabled>Next Level</button>
-        <button id="toggleAimBtn" type="button">Aim: Vertical</button>
+        <button id="toggleAimBtn" type="button" aria-label="Toggle wall direction">V</button>
       </div>
       <div class="stats">
         <span id="levelInfo"></span>
@@ -45,12 +45,13 @@
 
     <canvas id="gameCanvas"></canvas>
 
-    <section class="scoreboard">
-      <h2>High Scores</h2>
+    <details class="scoreboard" id="scoreboardPanel">
+      <summary>High Scores</summary>
       <ol id="highScoresList"></ol>
-    </section>
+    </details>
 
-    <p class="help">Tap to grow a wall. If a ball touches the growing wall, run over. Empty side is captured. Tap Aim or press Space to toggle cut direction.</p>
+    <p id="installHint" class="install-hint hidden">For full-screen play on iPhone: Safari Share -> Add to Home Screen.</p>
+    <p class="help">Drag on playfield to preview line, release to place wall. Tap V/H button (or Space) to swap direction.</p>
   </main>
   <script src="game.js"></script>
 </body>
